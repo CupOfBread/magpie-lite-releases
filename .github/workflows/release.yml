@@ -126,7 +126,16 @@ jobs:
           mkdir -p $RUNNER_TEMP/dmg
           cp -R magpie.app $RUNNER_TEMP/dmg/
           ln -s /Applications $RUNNER_TEMP/dmg/Applications
-          hdiutil create -volname magpie -srcfolder $RUNNER_TEMP/dmg -ov -format UDZO "$DMG"
+          # The Intel runners' hdiutil fails now and then with "create
+          # failed - Resource busy" while something still holds the image
+          # it makes; the release was lost each time (yetone/magpie#1846).
+          for try in 1 2 3 4 5; do
+            hdiutil create -volname magpie -srcfolder $RUNNER_TEMP/dmg -ov -format UDZO "$DMG" && break
+            [ "$try" = 5 ] && exit 1
+            echo "hdiutil create failed (try $try), trying again"
+            rm -f "$DMG"
+            sleep $((try * 10))
+          done
           if [ -n "$IDENTITY" ]; then
             codesign --force --timestamp --sign "$IDENTITY" "$DMG"
           fi
