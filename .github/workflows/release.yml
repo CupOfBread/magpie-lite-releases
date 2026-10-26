@@ -391,7 +391,20 @@ jobs:
             CHANGELOG=$(printf '### Changes\n\n'; echo "${COMMITS:-Various improvements and bug fixes}" | sed 's/^/- /')
           fi
 
+          # An urgent release goes to the Stable update channel at once
+          # (usemagpie.ai's /api/latest?channel=stable, yetone/magpie
+          # site/worker.js): a commit since the version before with an
+          # `Urgent: <why>` trailer puts the line the feed looks for at the
+          # top of the notes, untranslated, in every language's part.
+          URGENT=$(git log "$PREV_TAG..HEAD" --no-merges --format='%(trailers:key=Urgent,valueonly,separator=%x0A)' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | { grep -v '^$' || true; } | awk '!seen[$0]++' | paste -sd ';' - | sed 's/;/; /g')
+          URGENT_LINE=""
+          if [ -n "$URGENT" ]; then
+            URGENT_LINE="**Urgent release:** $URGENT"
+            echo "Urgent: $URGENT"
+          fi
+
           {
+            if [ -n "$URGENT_LINE" ]; then echo "$URGENT_LINE"; echo; fi
             echo "$CHANGELOG"
             echo
             echo "### Install"
@@ -425,6 +438,7 @@ jobs:
               echo
               echo "<!-- lang:zh -->"
               echo
+              if [ -n "$URGENT_LINE" ]; then echo "$URGENT_LINE"; echo; fi
               echo "$ZH"
               echo
               echo "### 安装"
