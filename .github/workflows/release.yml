@@ -312,6 +312,10 @@ jobs:
           BIN=dist/magpie-linux-${{ matrix.arch }}
           $BIN --version | grep -F "magpie $VERSION"
           export HOME=$(mktemp -d)
+          # no update: a release published while this one builds is newer,
+          # and the app would download it beside itself as $BIN.new, which
+          # went out as v0.1.1611's magpie-linux-amd64.new (15.8MB of 1612)
+          export MAGPIE_UPDATE_FEED=http://127.0.0.1:9/
           xvfb-run -a dbus-launch --exit-with-session $BIN app > $RUNNER_TEMP/magpie.log 2>&1 &
           for i in $(seq 30); do
             sleep 2
@@ -326,7 +330,7 @@ jobs:
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: build-linux-${{ matrix.arch }}
-          path: dist/magpie-linux-*
+          path: dist/magpie-linux-${{ matrix.arch }}
           if-no-files-found: error
 
   publish:
