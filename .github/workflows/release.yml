@@ -297,8 +297,16 @@ jobs:
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
         run: |
           CURRENT_TAG="v$VERSION"
-          PREV_TAG=$(git tag --sort=-v:refname | grep -A1 "^${CURRENT_TAG}$" | tail -1)
-          if [ -z "$PREV_TAG" ] || [ "$PREV_TAG" = "$CURRENT_TAG" ]; then
+          # The fork's own tags start at its first release, so the previous
+          # tag is usually upstream's: fetch those tags, or every commit in
+          # history lands in the notes and GitHub refuses a body past
+          # 125000 characters.
+          git fetch --quiet --tags https://github.com/yetone/magpie.git 'refs/tags/v*:refs/tags/v*' 2>/dev/null ||
+            echo "::warning::could not fetch upstream's tags"
+          PREV_TAG=$(git tag --sort=-v:refname | grep -v "^${CURRENT_TAG}$" | while read -r t; do
+            git merge-base --is-ancestor "$t" HEAD 2>/dev/null && { echo "$t"; break; }
+          done)
+          if [ -z "$PREV_TAG" ]; then
             PREV_TAG=$(git rev-list --max-parents=0 HEAD)
           fi
           echo "Commits since $PREV_TAG"
