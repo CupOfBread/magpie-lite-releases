@@ -50,8 +50,6 @@ jobs:
         include:
           - os: macos-latest
             arch: arm64
-          - os: macos-15-intel
-            arch: amd64
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -234,15 +232,7 @@ jobs:
   # Launch the Windows app for real: it has to come up and serve the gateway.
   windows-check:
     needs: cli
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: windows-latest
-            arch: amd64
-          - os: windows-11-arm
-            arch: arm64
-    runs-on: ${{ matrix.os }}
+    runs-on: windows-latest
 
     steps:
       - name: Download build
@@ -254,7 +244,7 @@ jobs:
       - name: Launch magpie
         shell: pwsh
         run: |
-          $exe = "dist\magpie-windows-${{ matrix.arch }}.exe"
+          $exe = "dist\magpie-windows-amd64.exe"
           $v = (& $exe --version | Out-String).Trim()
           Write-Output $v
           if ($v -notlike "magpie $env:VERSION*") { throw "unexpected version: $v" }
@@ -273,68 +263,8 @@ jobs:
           Stop-Process -Id $p.Id
           Write-Output "magpie ran and served the gateway"
 
-  # The Linux app links GTK 3 and WebKitGTK 4.1, so each arch builds on its
-  # own runner. Ubuntu 22.04 keeps the glibc requirement low.
-  linux:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-22.04
-            arch: amd64
-          - os: ubuntu-22.04-arm
-            arch: arm64
-    runs-on: ${{ matrix.os }}
-
-    steps:
-      - name: Checkout magpie source code
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
-        with:
-          repository: CupOfBread/magpie-lite
-          ssh-key: ${{ secrets.MAGPIE_DEPLOY_KEY }}
-          ref: ${{ env.REF }}
-
-      - name: Setup Go
-        uses: actions/setup-go@v6
-        with:
-          go-version-file: go.mod
-
-      - name: Install GTK and WebKitGTK
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libgtk-3-dev libwebkit2gtk-4.1-dev xvfb dbus-x11
-
-      - name: Build
-        run: make release-linux VERSION="$VERSION"
-
-      - name: Launch magpie
-        run: |
-          BIN=dist/magpie-linux-${{ matrix.arch }}
-          $BIN --version | grep -F "magpie $VERSION"
-          export HOME=$(mktemp -d)
-          # no update: a release published while this one builds is newer,
-          # and the app would download it beside itself as $BIN.new, which
-          # went out as v0.1.1611's magpie-linux-amd64.new (15.8MB of 1612)
-          export MAGPIE_UPDATE_FEED=http://127.0.0.1:9/
-          xvfb-run -a dbus-launch --exit-with-session $BIN app > $RUNNER_TEMP/magpie.log 2>&1 &
-          for i in $(seq 30); do
-            sleep 2
-            curl -fs -o /dev/null http://127.0.0.1:3425/v1/models && break
-          done
-          sleep 5
-          curl -fs -o /dev/null http://127.0.0.1:3425/v1/models || { cat $RUNNER_TEMP/magpie.log; echo "::error::magpie did not come up"; exit 1; }
-          pkill -f "$BIN" || true
-          echo "magpie ran and served the gateway"
-
-      - name: Upload build artifacts
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
-        with:
-          name: build-linux-${{ matrix.arch }}
-          path: dist/magpie-linux-${{ matrix.arch }}
-          if-no-files-found: error
-
   publish:
-    needs: [mac, cli, windows-check, linux]
+    needs: [mac, cli, windows-check]
     if: github.event_name != 'workflow_dispatch' || inputs.publish
     runs-on: ubuntu-latest
     permissions:
@@ -413,12 +343,10 @@ jobs:
             echo
             echo "### Install"
             echo
-            echo "Download from [usemagpie.ai](https://usemagpie.ai), or \`curl -fsSL https://usemagpie.ai/install.sh | sh\`. An installed magpie updates itself."
+            echo "Download from [this repo's Releases](https://github.com/${{ github.repository }}/releases). An installed magpie updates itself."
             echo
             echo "- **macOS (Apple Silicon):** \`magpie-darwin-arm64.dmg\`"
-            echo "- **macOS (Intel):** \`magpie-darwin-amd64.dmg\`"
-            echo "- **Windows:** \`magpie-windows-amd64.exe\` (ARM: \`magpie-windows-arm64.exe\`)"
-            echo "- **Linux:** \`magpie-linux-amd64\` / \`magpie-linux-arm64\` (needs GTK 3 and WebKitGTK 4.1)"
+            echo "- **Windows (amd64):** \`magpie-windows-amd64.exe\`"
             echo "- **Terminal only:** \`magpie-cli-<os>-<arch>\`"
           } > $RUNNER_TEMP/changelog.md
           # The English alone goes to Discord; the app asks usemagpie.ai for
