@@ -1,36 +1,13 @@
-# magpie-releases
+# magpie-lite-releases
 
-Builds of [magpie](https://github.com/CupOfBread/magpie-lite). Pushing a `v*`
-tag there triggers the workflow here, which builds, signs, notarises and
-publishes the release.
+Builds of [magpie-lite](https://github.com/CupOfBread/magpie-lite). Pushing a
+`v*` tag there triggers the workflow here, which builds the files and
+publishes them as a release.
 
-Get it from this repo's [Releases](https://github.com/CupOfBread/magpie-lite-releases/releases/latest):
+Download from [Releases](https://github.com/CupOfBread/magpie-lite-releases/releases/latest):
 
-- macOS, Apple Silicon: `magpie-darwin-arm64.dmg`
-- macOS, Intel: `magpie-darwin-amd64.dmg`
-- Windows: `magpie-windows-amd64.exe`, or `magpie-windows-arm64.exe`
-- Linux: `magpie-linux-amd64`, or `magpie-linux-arm64` (needs GTK 3 and WebKitGTK 4.1)
-- Terminal only: `magpie-cli-<os>-<arch>`
+- macOS, Apple Silicon: `magpie-darwin-arm64.dmg`, or `magpie-darwin-arm64.zip`
+- Windows, amd64: `magpie-windows-amd64.exe`
+- Terminal only: `magpie-cli-darwin-arm64`, `magpie-cli-windows-amd64.exe`
 
-## Homebrew
-
-```sh
-brew tap CupOfBread/magpie-lite-releases https://github.com/CupOfBread/magpie-lite-releases
-brew trust --tap CupOfBread/magpie-lite-releases
-```
-
-(`brew trust` is Homebrew 7's; skip it on an older Homebrew.)
-
-Terminal-only binary, as `magpie` on macOS and Linux:
-
-```sh
-brew install magpie
-```
-
-The macOS app, signed and notarised, into `/Applications`:
-
-```sh
-brew install --cask magpie-app
-```
-
-Both are updated on every release, so `brew upgrade` picks up new versions. The app also updates itself, as it does however it was installed; `magpie update` in a Homebrew install says to use `brew upgrade magpie` instead.
+`SHA256SUMS` has every file's checksum.

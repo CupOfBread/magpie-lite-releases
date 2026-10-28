@@ -1,24 +1,8 @@
 name: Release
 
-# Builds, signs, notarises and publishes magpie. Pushing a v* tag on
-# CupOfBread/magpie-lite dispatches here, and the builds land on this repo's
-# Releases, where anyone can download them: the desktop app for macOS,
-# Windows and Linux, and the terminal-only build for every platform.
-#
-# macOS signing is optional: without MAC_CERTIFICATE_P12 the app is only
-# ad-hoc signed (still runs after right-click → Open). With it the app is
-# signed with the Developer ID under the hardened runtime, the dmg notarised
-# and the ticket stapled to both the dmg and the app inside the zip.
-# Notarisation takes an App Store Connect API key (APPLE_API_KEY_P8,
-# APPLE_API_KEY_ID, APPLE_API_ISSUER) or, failing that, an Apple ID
-# (APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID).
-#
-# The Windows and Linux apps are not signed. Each is launched on its own
-# platform before the release goes out: it must stay up and serve the
-# gateway.
-#
-# The source is checked out with MAGPIE_DEPLOY_KEY, a read-only deploy key
-# on CupOfBread/magpie-lite.
+# Builds magpie and publishes the files. A v* tag on CupOfBread/magpie-lite
+# dispatches here. Nothing else runs: no signing, no notarisation, no notes
+# from a model, no Homebrew tap, no copy back to the source repo.
 
 on:
   repository_dispatch:
@@ -43,14 +27,10 @@ env:
   VERSION: ${{ github.event.client_payload.version || github.event.inputs.version }}
 
 jobs:
+  # The macOS app links the system webview through cgo, so it builds on a
+  # macOS runner, Apple Silicon only.
   mac:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: macos-latest
-            arch: arm64
-    runs-on: ${{ matrix.os }}
+    runs-on: macos-latest
 
     steps:
       - name: Checkout magpie source code
@@ -65,68 +45,17 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Probe macOS signing secrets
-        id: signing
-        env:
-          P12: ${{ secrets.MAC_CERTIFICATE_P12 }}
-        run: |
-          if [ -n "$P12" ]; then
-            echo "enabled=true" >> $GITHUB_OUTPUT
-          else
-            echo "enabled=false" >> $GITHUB_OUTPUT
-            echo "::warning::MAC_CERTIFICATE_P12 not set — the mac build will be ad-hoc signed and not notarised."
-          fi
-
-      - name: Import macOS certificates
-        if: steps.signing.outputs.enabled == 'true'
-        env:
-          CERTIFICATE_P12: ${{ secrets.MAC_CERTIFICATE_P12 }}
-          CERTIFICATE_PASSWORD: ${{ secrets.MAC_CERTIFICATE_PASSWORD }}
-        run: |
-          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
-          KEYCHAIN_PASSWORD=$(openssl rand -base64 32)
-
-          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-
-          echo "$CERTIFICATE_P12" | base64 --decode > $RUNNER_TEMP/certificate.p12
-          security import $RUNNER_TEMP/certificate.p12 -P "$CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
-          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          security list-keychain -d user -s "$KEYCHAIN_PATH" login.keychain-db
-          rm -f $RUNNER_TEMP/certificate.p12
-
-          IDENTITY=$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" | awk -F'"' '/Developer ID Application/ {print $2; exit}')
-          if [ -z "$IDENTITY" ]; then
-            echo "::error::No 'Developer ID Application' identity in MAC_CERTIFICATE_P12"
-            security find-identity -v -p codesigning "$KEYCHAIN_PATH"
-            exit 1
-          fi
-          echo "Signing as: $IDENTITY"
-          echo "IDENTITY=$IDENTITY" >> $GITHUB_ENV
-
       - name: Build magpie.app
         run: make app VERSION="$VERSION"
 
-      - name: Sign magpie.app
+      - name: Build dmg and zip
         run: |
-          if [ -n "$IDENTITY" ]; then
-            codesign --force --options runtime --timestamp --sign "$IDENTITY" magpie.app
-          else
-            codesign --force --sign - magpie.app
-          fi
-          codesign --verify --strict --verbose=2 magpie.app
-          codesign -dv --verbose=2 magpie.app 2>&1 | grep -E 'Authority|TeamIdentifier|flags|Identifier'
-
-      - name: Build dmg
-        run: |
-          DMG=magpie-darwin-${{ matrix.arch }}.dmg
+          DMG=magpie-darwin-arm64.dmg
           mkdir -p $RUNNER_TEMP/dmg
           cp -R magpie.app $RUNNER_TEMP/dmg/
           ln -s /Applications $RUNNER_TEMP/dmg/Applications
-          # The Intel runners' hdiutil fails now and then with "create
-          # failed - Resource busy" while something still holds the image
-          # it makes; the release was lost each time (yetone/magpie#1846).
+          # hdiutil fails now and then with "Resource busy" while something
+          # still holds the image it makes; a retry keeps the release alive.
           for try in 1 2 3 4 5; do
             hdiutil create -volname magpie -srcfolder $RUNNER_TEMP/dmg -ov -format UDZO "$DMG" && break
             [ "$try" = 5 ] && exit 1
@@ -134,73 +63,19 @@ jobs:
             rm -f "$DMG"
             sleep $((try * 10))
           done
-          if [ -n "$IDENTITY" ]; then
-            codesign --force --timestamp --sign "$IDENTITY" "$DMG"
-          fi
-          echo "DMG=$DMG" >> $GITHUB_ENV
-
-      - name: Notarise and staple
-        if: steps.signing.outputs.enabled == 'true'
-        env:
-          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
-          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
-          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: |
-          if [ -n "$APPLE_API_KEY_P8" ]; then
-            echo "$APPLE_API_KEY_P8" > $RUNNER_TEMP/AuthKey.p8
-            AUTH=(--key $RUNNER_TEMP/AuthKey.p8 --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER")
-          else
-            AUTH=(--apple-id "$APPLE_ID" --password "$APPLE_APP_SPECIFIC_PASSWORD" --team-id "$APPLE_TEAM_ID")
-          fi
-          # The dmg's ticket covers the app inside it too, so one submission
-          # does for both: staple the dmg, and the app for the zip.
-          OUT=$(xcrun notarytool submit "$DMG" "${AUTH[@]}" --wait --timeout 30m --output-format json)
-          echo "$OUT"
-          ID=$(echo "$OUT" | jq -r .id)
-          STATUS=$(echo "$OUT" | jq -r .status)
-          if [ "$STATUS" != "Accepted" ]; then
-            xcrun notarytool log "$ID" "${AUTH[@]}" || true
-            rm -f $RUNNER_TEMP/AuthKey.p8
-            echo "::error::Notarisation $STATUS"
-            exit 1
-          fi
-          rm -f $RUNNER_TEMP/AuthKey.p8
-          # stapler fetches the ticket from Apple's CloudKit, which drops the
-          # connection now and then (error 68): try again before failing
-          staple() {
-            for i in 1 2 3 4 5; do
-              xcrun stapler staple "$1" && return 0
-              echo "staple $1 failed (try $i), retrying in $((i * 20))s"
-              sleep $((i * 20))
-            done
-            return 1
-          }
-          staple "$DMG"
-          staple magpie.app
-          spctl --assess --type execute --verbose=2 magpie.app
-          spctl --assess --type open --context context:primary-signature --verbose=2 "$DMG"
-
-      - name: Zip magpie.app
-        run: ditto -c -k --keepParent magpie.app magpie-darwin-${{ matrix.arch }}.zip
-
-      - name: Remove signing keychain
-        if: always() && steps.signing.outputs.enabled == 'true'
-        run: security delete-keychain $RUNNER_TEMP/app-signing.keychain-db || true
+          ditto -c -k --keepParent magpie.app magpie-darwin-arm64.zip
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
-          name: build-darwin-${{ matrix.arch }}
+          name: build-darwin-arm64
           path: |
-            magpie-darwin-*.dmg
-            magpie-darwin-*.zip
+            magpie-darwin-arm64.dmg
+            magpie-darwin-arm64.zip
           if-no-files-found: error
 
-  # The terminal-only magpie (no GUI, no cgo) and the Windows app (WebView2,
-  # no cgo either) cross-compile from one runner.
+  # The terminal-only build and the Windows app need no cgo, so they
+  # cross-compile from one Linux runner.
   cli:
     runs-on: ubuntu-latest
 
@@ -229,57 +104,14 @@ jobs:
             dist/magpie-windows-*.exe
           if-no-files-found: error
 
-  # Launch the Windows app for real: it has to come up and serve the gateway.
-  windows-check:
-    needs: cli
-    runs-on: windows-latest
-
-    steps:
-      - name: Download build
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
-        with:
-          name: build-cli
-          path: dist
-
-      - name: Launch magpie
-        shell: pwsh
-        run: |
-          $exe = "dist\magpie-windows-amd64.exe"
-          $v = (& $exe --version | Out-String).Trim()
-          Write-Output $v
-          if ($v -notlike "magpie $env:VERSION*") { throw "unexpected version: $v" }
-          $log = "$env:RUNNER_TEMP\magpie"
-          $p = Start-Process -FilePath $exe -ArgumentList app -PassThru -RedirectStandardOutput "$log.out" -RedirectStandardError "$log.err"
-          function Fail($why) { Get-Content "$log.out", "$log.err" -ErrorAction SilentlyContinue; throw $why }
-          $ok = $false
-          foreach ($i in 1..30) {
-            Start-Sleep -Seconds 2
-            if ($p.HasExited) { Fail "magpie exited with $($p.ExitCode)" }
-            try { Invoke-WebRequest http://127.0.0.1:3425/v1/models -UseBasicParsing | Out-Null; $ok = $true; break } catch {}
-          }
-          if (-not $ok) { Fail "the gateway never answered" }
-          Start-Sleep -Seconds 5
-          if ($p.HasExited) { Fail "magpie exited with $($p.ExitCode)" }
-          Stop-Process -Id $p.Id
-          Write-Output "magpie ran and served the gateway"
-
   publish:
-    needs: [mac, cli, windows-check]
+    needs: [mac, cli]
     if: github.event_name != 'workflow_dispatch' || inputs.publish
     runs-on: ubuntu-latest
     permissions:
       contents: write
 
     steps:
-      - name: Checkout magpie source code
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
-        with:
-          repository: CupOfBread/magpie-lite
-          ssh-key: ${{ secrets.MAGPIE_DEPLOY_KEY }}
-          ref: ${{ env.REF }}
-          fetch-depth: 0
-          fetch-tags: true
-
       - name: Download all artifacts
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
@@ -292,164 +124,18 @@ jobs:
           sha256sum * > SHA256SUMS
           ls -la
 
-      - name: Generate changelog
-        env:
-          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
-        run: |
-          CURRENT_TAG="v$VERSION"
-          # The fork's own tags start at its first release, so the previous
-          # tag is usually upstream's: fetch those tags, or every commit in
-          # history lands in the notes and GitHub refuses a body past
-          # 125000 characters.
-          git fetch --quiet --tags https://github.com/yetone/magpie.git 'refs/tags/v*:refs/tags/v*' 2>/dev/null ||
-            echo "::warning::could not fetch upstream's tags"
-          PREV_TAG=$(git tag --sort=-v:refname | grep -v "^${CURRENT_TAG}$" | while read -r t; do
-            git merge-base --is-ancestor "$t" HEAD 2>/dev/null && { echo "$t"; break; }
-          done)
-          if [ -z "$PREV_TAG" ]; then
-            PREV_TAG=$(git rev-list --max-parents=0 HEAD)
-          fi
-          echo "Commits since $PREV_TAG"
-          COMMITS=$(git log "$PREV_TAG..HEAD" --pretty=format:"%s" --no-merges)
-          echo "$COMMITS"
-
-          CHANGELOG=""
-          if [ -n "$DEEPSEEK_API_KEY" ] && [ -n "$COMMITS" ]; then
-            PROMPT="Based on the following git commit messages, generate a concise and user-friendly changelog in markdown format. Group changes by category (e.g., Features, Bug Fixes, Improvements). Only include meaningful changes, skip trivial commits. Use clear, non-technical language where possible. Output ONLY the changelog content without any preamble.
-
-          Commit messages:
-          $COMMITS"
-            RESPONSE=$(curl -s --max-time 300 https://api.deepseek.com/chat/completions \
-              -H "Content-Type: application/json" \
-              -H "Authorization: Bearer $DEEPSEEK_API_KEY" \
-              -d "$(jq -n --arg prompt "$PROMPT" '{"model": "deepseek-v4-pro", "messages": [{"role": "user", "content": $prompt}]}')")
-            CHANGELOG=$(echo "$RESPONSE" | jq -r '.choices[0].message.content // empty' 2>/dev/null)
-            # a refusal (a spent balance, a retired model) is said, not
-            # silently turned into the commit list (10-13 to 10-14: no
-            # notes and no Chinese for four releases, yetone/magpie#2122)
-            [ -n "$CHANGELOG" ] || echo "::warning::DeepSeek wrote no changelog: $(echo "$RESPONSE" | jq -c '.error // .' 2>/dev/null | head -c 500)"
-          fi
-          if [ -z "$CHANGELOG" ]; then
-            CHANGELOG=$(printf '### Changes\n\n'; echo "${COMMITS:-Various improvements and bug fixes}" | sed 's/^/- /')
-          fi
-
-          # An urgent release goes to the Stable update channel at once
-          # (usemagpie.ai's /api/latest?channel=stable, yetone/magpie
-          # site/worker.js): a commit since the version before with an
-          # `Urgent: <why>` trailer puts the line the feed looks for at the
-          # top of the notes, untranslated, in every language's part.
-          URGENT=$(git log "$PREV_TAG..HEAD" --no-merges --format='%(trailers:key=Urgent,valueonly,separator=%x0A)' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | { grep -v '^$' || true; } | awk '!seen[$0]++' | paste -sd ';' - | sed 's/;/; /g')
-          URGENT_LINE=""
-          if [ -n "$URGENT" ]; then
-            URGENT_LINE="**Urgent release:** $URGENT"
-            echo "Urgent: $URGENT"
-          fi
-
-          {
-            if [ -n "$URGENT_LINE" ]; then echo "$URGENT_LINE"; echo; fi
-            echo "$CHANGELOG"
-            echo
-            echo "### Install"
-            echo
-            echo "Download from [this repo's Releases](https://github.com/${{ github.repository }}/releases). An installed magpie updates itself."
-            echo
-            echo "- **macOS (Apple Silicon):** \`magpie-darwin-arm64.dmg\`"
-            echo "- **Windows (amd64):** \`magpie-windows-amd64.exe\`"
-            echo "- **Terminal only:** \`magpie-cli-<os>-<arch>\`"
-          } > $RUNNER_TEMP/changelog.md
-          # The English alone goes to Discord; the app asks usemagpie.ai for
-          # the notes in its language, served from below the marker.
-          cp $RUNNER_TEMP/changelog.md $RUNNER_TEMP/changelog-en.md
-
-          ZH=""
-          if [ -n "$DEEPSEEK_API_KEY" ]; then
-            ZPROMPT="Translate the following release notes into Simplified Chinese. Keep the markdown structure, headings, links, code spans and product names (magpie, Claude Code, Codex, ...) as they are. Output ONLY the translation without any preamble.
-
-          $CHANGELOG"
-            ZRESPONSE=$(curl -s --max-time 300 https://api.deepseek.com/chat/completions \
-              -H "Content-Type: application/json" \
-              -H "Authorization: Bearer $DEEPSEEK_API_KEY" \
-              -d "$(jq -n --arg prompt "$ZPROMPT" '{"model": "deepseek-v4-pro", "messages": [{"role": "user", "content": $prompt}]}')") || true
-            ZH=$(echo "$ZRESPONSE" | jq -r '.choices[0].message.content // empty' 2>/dev/null) || ZH=""
-            [ -n "$ZH" ] || echo "::warning::DeepSeek wrote no Chinese notes: $(echo "$ZRESPONSE" | jq -c '.error // .' 2>/dev/null | head -c 500)"
-          fi
-          if [ -n "$ZH" ]; then
-            {
-              echo
-              echo "<!-- lang:zh -->"
-              echo
-              if [ -n "$URGENT_LINE" ]; then echo "$URGENT_LINE"; echo; fi
-              echo "$ZH"
-              echo
-              echo "### 安装"
-              echo
-              echo "从 [usemagpie.ai](https://usemagpie.ai) 下载，或运行 \`curl -fsSL https://usemagpie.ai/install.sh | sh\`。已安装的 magpie 会自动更新。"
-            } >> $RUNNER_TEMP/changelog.md
-          else
-            echo "No Chinese notes — the English alone is published."
-          fi
-          cat $RUNNER_TEMP/changelog.md
-
       - name: Create Release
         uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2.5.0
         with:
           tag_name: v${{ env.VERSION }}
           name: magpie v${{ env.VERSION }}
           draft: false
-          body_path: ${{ runner.temp }}/changelog.md
+          body: |
+            ### Files
+
+            - **macOS (Apple Silicon):** `magpie-darwin-arm64.dmg`, or `magpie-darwin-arm64.zip`
+            - **Windows (amd64):** `magpie-windows-amd64.exe`
+            - **Terminal only:** `magpie-cli-darwin-arm64`, `magpie-cli-windows-amd64.exe`
+
+            `SHA256SUMS` has every file's checksum.
           files: dist/*
-
-      - name: Probe Discord webhook
-        id: discord
-        env:
-          HOOK: ${{ secrets.DISCORD_RELEASE_WEBHOOK_URL }}
-        run: |
-          if [ -n "$HOOK" ]; then
-            echo "enabled=true" >> $GITHUB_OUTPUT
-          else
-            echo "enabled=false" >> $GITHUB_OUTPUT
-            echo "Discord webhook not set — skipping announcement."
-          fi
-
-      - name: Post to Discord
-        if: steps.discord.outputs.enabled == 'true'
-        env:
-          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_RELEASE_WEBHOOK_URL }}
-        run: |
-          RELEASE_URL="https://github.com/${{ github.repository }}/releases/tag/v$VERSION"
-          MESSAGE="## magpie v$VERSION
-
-          $(cat $RUNNER_TEMP/changelog-en.md)
-
-          **Download:** ${RELEASE_URL}"
-          if [ ${#MESSAGE} -gt 1990 ]; then
-            MESSAGE="${MESSAGE:0:1987}..."
-          fi
-          jq -n --arg content "$MESSAGE" '{content: $content}' | \
-            curl -sf -H "Content-Type: application/json" -d @- "$DISCORD_WEBHOOK_URL"
-
-      - name: Checkout magpie-releases
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
-        with:
-          ref: lamburger
-          path: tap
-
-      # Runs last, so a tap failure cannot swallow the announcement of a release
-      # that is already public. Only tag refs reach the tap: a manual dispatch
-      # from a branch builds and publishes, but must not move stable installs.
-      - name: Update Homebrew tap
-        if: startsWith(env.REF, 'v') || startsWith(env.REF, 'refs/tags/v')
-        env:
-          TAP_RELEASE_REPO: ${{ github.repository }}
-        run: |
-          cd tap
-          ./scripts/update-tap.sh "$VERSION"
-          git add -A
-          if git diff --cached --quiet; then
-            echo "Tap is already at v$VERSION."
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -m "chore: update homebrew tap for v$VERSION"
-          git push
