@@ -6,11 +6,12 @@
 #   TAP_OUT_DIR=/tmp/tap scripts/update-tap.sh 0.1.57
 #   scripts/update-tap.sh --self-check
 #
-# TAP_RELEASE_REPO overrides the Release repo (default yetone/magpie-releases);
-# the self-check uses it to pick the latest Release.
+# TAP_RELEASE_REPO overrides the Release repo (default
+# CupOfBread/magpie-lite-releases); the self-check uses it to pick the latest
+# Release.
 set -euo pipefail
 
-REPO="${TAP_RELEASE_REPO:-yetone/magpie-releases}"
+REPO="${TAP_RELEASE_REPO:-CupOfBread/magpie-lite-releases}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT="${TAP_OUT_DIR:-$ROOT}"
 HOMEPAGE="https://usemagpie.ai/"

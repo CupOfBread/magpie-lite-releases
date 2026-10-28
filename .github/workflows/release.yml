@@ -1,7 +1,7 @@
 name: Release
 
 # Builds, signs, notarises and publishes magpie. Pushing a v* tag on
-# yetone/magpie dispatches here, and the builds land on this repo's
+# CupOfBread/magpie-lite dispatches here, and the builds land on this repo's
 # Releases, where anyone can download them: the desktop app for macOS,
 # Windows and Linux, and the terminal-only build for every platform.
 #
@@ -18,7 +18,7 @@ name: Release
 # gateway.
 #
 # The source is checked out with MAGPIE_DEPLOY_KEY, a read-only deploy key
-# on yetone/magpie.
+# on CupOfBread/magpie-lite.
 
 on:
   repository_dispatch:
@@ -26,7 +26,7 @@ on:
   workflow_dispatch:
     inputs:
       ref:
-        description: 'Git ref of yetone/magpie to build (tag or branch)'
+        description: 'Git ref of CupOfBread/magpie-lite to build (tag or branch)'
         required: true
         type: string
       version:
@@ -58,7 +58,7 @@ jobs:
       - name: Checkout magpie source code
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
         with:
-          repository: yetone/magpie
+          repository: CupOfBread/magpie-lite
           ssh-key: ${{ secrets.MAGPIE_DEPLOY_KEY }}
           ref: ${{ env.REF }}
 
@@ -210,7 +210,7 @@ jobs:
       - name: Checkout magpie source code
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
         with:
-          repository: yetone/magpie
+          repository: CupOfBread/magpie-lite
           ssh-key: ${{ secrets.MAGPIE_DEPLOY_KEY }}
           ref: ${{ env.REF }}
 
@@ -290,7 +290,7 @@ jobs:
       - name: Checkout magpie source code
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
         with:
-          repository: yetone/magpie
+          repository: CupOfBread/magpie-lite
           ssh-key: ${{ secrets.MAGPIE_DEPLOY_KEY }}
           ref: ${{ env.REF }}
 
@@ -344,7 +344,7 @@ jobs:
       - name: Checkout magpie source code
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
         with:
-          repository: yetone/magpie
+          repository: CupOfBread/magpie-lite
           ssh-key: ${{ secrets.MAGPIE_DEPLOY_KEY }}
           ref: ${{ env.REF }}
           fetch-depth: 0

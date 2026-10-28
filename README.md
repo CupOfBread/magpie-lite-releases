@@ -1,11 +1,10 @@
 # magpie-releases
 
-Builds of [magpie](https://github.com/yetone/magpie). Pushing a `v*` tag
-there triggers the workflow here, which builds, signs, notarises and
+Builds of [magpie](https://github.com/CupOfBread/magpie-lite). Pushing a `v*`
+tag there triggers the workflow here, which builds, signs, notarises and
 publishes the release.
 
-Get it from [usemagpie.ai](https://usemagpie.ai) (`curl -fsSL https://usemagpie.ai/install.sh | sh`),
-or download the latest from [Releases](https://github.com/yetone/magpie-releases/releases/latest):
+Get it from this repo's [Releases](https://github.com/CupOfBread/magpie-lite-releases/releases/latest):
 
 - macOS, Apple Silicon: `magpie-darwin-arm64.dmg`
 - macOS, Intel: `magpie-darwin-amd64.dmg`
@@ -16,8 +15,8 @@ or download the latest from [Releases](https://github.com/yetone/magpie-releases
 ## Homebrew
 
 ```sh
-brew tap yetone/magpie-releases https://github.com/yetone/magpie-releases
-brew trust --tap yetone/magpie-releases
+brew tap CupOfBread/magpie-lite-releases https://github.com/CupOfBread/magpie-lite-releases
+brew trust --tap CupOfBread/magpie-lite-releases
 ```
 
 (`brew trust` is Homebrew 7's; skip it on an older Homebrew.)
